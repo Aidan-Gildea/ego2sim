@@ -16,7 +16,7 @@
 #   ROLLING_SHUTTER / RS_START   rolling-shutter rendering on/off and the step it starts, default true / 10000
 #   DEPTH_LOSS    also fit the MPS sparse depth, default false
 #   TRAIN_SPLIT   7-1 (every 8th frame held out for testing) or all, default 7-1
-# run_contactsplat.sh sets all of these and explains each one.
+# run_ego2sim.sh sets all of these and explains each one.
 
 set -euo pipefail
 

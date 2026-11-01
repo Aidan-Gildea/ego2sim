@@ -2,7 +2,7 @@
 # Turn one Aria Gen 2 recording into an Isaac Sim scene: a Gaussian splat for appearance and a
 # collision mesh for physics, packaged together in one USDZ.
 #
-#   bash run_contactsplat.sh /path/to/<recording>.vrs
+#   bash run_ego2sim.sh /path/to/<recording>.vrs
 #
 # The MPS SLAM output must be next to the recording, in mps_<recording>_vrs/slam/, which is
 # where aria_mps writes it (or set MPS_FOLDER). The frames, mesh and splat stages are skipped
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 # --- Settings ----------------------------------------------------------------------------------
-# Edit the values here, or set any of them before the command, e.g. ITERATIONS=15000 bash run_contactsplat.sh ...
+# Edit the values here, or set any of them before the command, e.g. ITERATIONS=15000 bash run_ego2sim.sh ...
 # A changed setting only affects stages that have not run yet. To redo the mesh, add FORCE=1. To
 # retrain the splat, delete output/<recording>/<RECT>/point_cloud/.
 
@@ -65,7 +65,7 @@ export RGB_FOCAL="${RGB_FOCAL:-1008}"
 export RGB_HEIGHT="${RGB_HEIGHT:-1512}"
 
 # --- Paths ---------------------------------------------------------------------------------------
-VRS="${1:?usage: bash run_contactsplat.sh /path/to/<recording>.vrs}"
+VRS="${1:?usage: bash run_ego2sim.sh /path/to/<recording>.vrs}"
 [ -f "$VRS" ] || { echo "No recording at: $VRS" >&2; exit 1; }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

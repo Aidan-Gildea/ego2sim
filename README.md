@@ -20,24 +20,51 @@ Aidan Gildea, Sunwoong Choi
 
 </div>
 
-## Overview
-
 <p align="center"><img src="media/teaser.png" alt="An egocentric walk becomes a hybrid scene of a Gaussian splat and a collider, in which Spot robots make contact with a car and a hedge" width="100%"></p>
 
-Ego2Sim turns one walk with Meta's [Project Aria Gen 2](https://www.projectaria.com/) glasses into a scene that a robot can walk through in NVIDIA Isaac Sim. Each scene has two parts:
+## Overview
+
+
+Ego2Sim converts data from a single capture using Meta's [Project Aria Gen 2](https://www.projectaria.com/) glasses into a scene that a robot can walk through in NVIDIA Isaac Sim. Each scene is composed of two parts:
 
 - **A Gaussian splat for appearance**, trained on the glasses' RGB video.
 - **A collision mesh for contact**, built from the glasses' own SLAM points, which come from Aria's Machine Perception Services (MPS).
 
-Both come out in the same metric, gravity-aligned frame, so they line up with no registration step, and they are packed into one `.usdz` file. Against same-day iPad LiDAR scans, the collision mesh reaches an F-score of 0.84–0.94 at 10 cm within 1 m of the ground, and it takes 51–160× less time to build than a multi-view stereo mesh. The frame extraction and splat training come from Meta's [egocentric_splats](https://github.com/facebookresearch/egocentric_splats).
+Both come out in the same metric & gravity-aligned frame, so they line up with no registration step, and they are packed into a single `.usdz` file. Against same-day iPad LiDAR scans, the collision mesh reaches an F-score of 0.84–0.94 at 10 cm within 1 m of the ground, and it takes 51–160× less time to build than a multi-view stereo mesh. The frame extraction and splat training come from Meta's [egocentric_splats](https://github.com/facebookresearch/egocentric_splats).
 
 ## Quick start
 
-You need:
-- **Linux with an NVIDIA GPU.** 16 GB was enough for the outdoor recordings; the indoor Room sample needed 48 GB.
-- **A Python 3.10 environment with CUDA PyTorch 2.6 or newer**, plus the matching CUDA toolkit (`nvcc`). gsplat compiles its CUDA code the first time it runs.
-- **[COLMAP](https://colmap.github.io/install.html) on your `PATH`**, built with CGAL. Package-manager builds include it.
+System Requirements:
+- **Linux with an NVIDIA GPU.** Recommended 16+ GB VRAM
+- **Python 3.10 with CUDA PyTorch 2.6 or newer**, plus the CUDA toolkit (`nvcc`) of the same CUDA version.
+- **[COLMAP](https://colmap.github.io/install.html) on your `PATH`**, built with CGAL, which the collider needs. The conda-forge and `apt` packages have it.
 - **Isaac Sim 5.1** to open the result.
+
+<details>
+<summary><b>Setting up the environment</b></summary>
+
+`nvidia-smi` shows the newest CUDA version your driver supports, in the top right. The commands below use CUDA 12.8. If yours shows lower, change `12.8.1` to `12.6.3` and `cu128` to `cu126`.
+
+```bash
+nvidia-smi
+conda create -n ego2sim python=3.10 -y
+conda activate ego2sim
+conda install -y -c "nvidia/label/cuda-12.8.1" cuda-toolkit
+conda env config vars set CUDA_HOME="$CONDA_PREFIX"
+conda activate ego2sim
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+conda install -y -c conda-forge colmap
+```
+
+`nvcc` should show the same CUDA version as PyTorch, and `colmap delaunay_mesher -h` should list its options, not a CGAL error.
+
+```bash
+nvcc --version
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+colmap delaunay_mesher -h
+```
+
+</details>
 
 ```bash
 git clone https://github.com/Aidan-Gildea/ego2sim.git
@@ -58,12 +85,12 @@ aria_mps single -i ~/recordings/Outside_20260812_141244.vrs --features SLAM
 
 The pipeline looks for the output in `mps_<recording>_vrs/slam/` next to the `.vrs`. If yours is somewhere else, set `MPS_FOLDER` to its `slam/` folder. [Sample recordings](https://drive.google.com/drive/folders/1INGZFiCD6qYtHSzbXo4Qegmj-flwikv0) with their MPS output are on Google Drive.
 
-The defaults assume recording profile `profile10` (RGB 2016×1512 at 30 Hz). For any other profile, `python debug_scripts/recording_info.py --vrs <file>` prints the `RGB_FOCAL` and `RGB_HEIGHT` to set.
+The defaults assume recording profile `profile10` (RGB 2016×1512 at 30 Hz). For any other profile, see [debug_scripts](debug_scripts/README.md).
 
 ### 2. Run the pipeline
 
 ```bash
-bash run_contactsplat.sh ~/recordings/Outside_20260812_141244.vrs
+bash run_ego2sim.sh ~/recordings/Outside_20260812_141244.vrs
 ```
 
 A first run takes a few hours: extracting the frames and training the splat each take one to three hours, and the collision mesh takes a few minutes. If you stop and rerun it, stages that already finished are skipped. A stopped training run starts over.
@@ -98,7 +125,7 @@ Open the `.usdz` with File > Open and press Play to turn on collisions. The spla
 <details>
 <summary><b>Settings</b></summary>
 
-Every setting is at the top of `run_contactsplat.sh`, with a note on what changing it does. Edit it there, or set it before the command, for example `ITERATIONS=15000 bash run_contactsplat.sh ...`.
+Every setting is at the top of `run_ego2sim.sh`, with a note on what changing it does. Edit it there, or set it before the command, for example `ITERATIONS=15000 bash run_ego2sim.sh ...`.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
@@ -134,7 +161,7 @@ python launch_viewer.py model_root=output/<recording>
 
 | Path | What it does |
 | --- | --- |
-| `run_contactsplat.sh` | Runs the whole pipeline and holds every setting |
+| `run_ego2sim.sh` | Runs the whole pipeline and holds every setting |
 | `scripts/extract_aria_vrs.py` | Stage 1: reads the `.vrs` and the MPS output, writes rectified, posed frames |
 | `mps-mesh/` | Stage 2: collision mesh from the MPS points |
 | `photogrammetry/` | Mesh scoring and simplification used by stage 2, and the optional multi-view stereo mesh |

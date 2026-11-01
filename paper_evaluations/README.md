@@ -1,6 +1,6 @@
 # paper_evaluations: grading a collider against an iPad LiDAR scan
 
-These scripts grade a ContactSplat collider against an independent reference: a same-day iPad LiDAR scan of the place, exported from RTAB-Map as a point cloud. They are evaluation tools for the paper and are not part of the pipeline in `run_contactsplat.sh`.
+These scripts grade an Ego2Sim collider against an independent reference: a same-day iPad LiDAR scan of the place, exported from RTAB-Map as a point cloud. They are evaluation tools for the paper and are not part of the pipeline in `run_ego2sim.sh`.
 
 The scan is called *reference geometry*, not ground truth. Its own error is measured, and only thresholds of at least twice that error are trusted.
 

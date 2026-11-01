@@ -4,7 +4,8 @@
 Reports the device generation, the camera labels present, the RGB frame count
 and resolution, and the rolling-shutter readout time of every camera. It ends
 with the exact rectification flags to pass for a 90 degree horizontal field of
-view at the sensor's native resolution.
+view at the sensor's native resolution, and the run_ego2sim.sh command that
+uses them.
 
     python debug_scripts/recording_info.py --vrs /path/to/my_recording.vrs
 
@@ -95,6 +96,9 @@ def main() -> None:
     print(f"    --rectified_monochrome_focal 180 --rectified_monochrome_height 512")
     print()
     print(f"Rectified folder will be named camera-rgb-rectified-{focal:.0f}-h{height}")
+    print()
+    print("To run the pipeline with them:")
+    print(f"    RGB_FOCAL={focal:.0f} RGB_HEIGHT={height} bash run_ego2sim.sh {vrs_path}")
 
 
 if __name__ == "__main__":

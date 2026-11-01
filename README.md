@@ -20,11 +20,9 @@ Aidan Gildea, Sunwoong Choi
 
 </div>
 
-<p align="center"><img src="media/teaser.jpg" alt="An egocentric walk becomes a hybrid scene of a Gaussian splat and a collider, in which Spot robots make contact with a car and a hedge" width="100%"></p>
-
-<p align="center"><i>One walk with head-worn glasses becomes a hybrid scene: a Gaussian splat for what a robot sees and a collision mesh for contact. Spot robots in Isaac Sim then touch the car and the hedge.</i></p>
-
 ## Overview
+
+<p align="center"><img src="media/teaser.png" alt="An egocentric walk becomes a hybrid scene of a Gaussian splat and a collider, in which Spot robots make contact with a car and a hedge" width="100%"></p>
 
 Ego2Sim turns one walk with Meta's [Project Aria Gen 2](https://www.projectaria.com/) glasses into a scene that a robot can walk through in NVIDIA Isaac Sim. Each scene has two parts:
 

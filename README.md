@@ -23,7 +23,7 @@
 
 <p align="center"><img src="media/teaser.png" alt="An egocentric walk becomes a hybrid scene of a Gaussian splat and a collider, in which Spot robots make contact with a car and a hedge" width="100%"></p>
 
-This repository is the code for the Ego2Sim paper: one walk with Meta's [Project Aria Gen 2](https://www.projectaria.com/) glasses becomes an Isaac Sim scene with a Gaussian splat for appearance and a collision mesh for contact.
+<p align="center">This repository is the code for the Ego2Sim paper.</p>
 
 ## Quick Start
 
@@ -84,7 +84,7 @@ The code used for the paper is tagged [`srf-2026`](https://github.com/Aidan-Gild
 - **Training data.** Sample recordings with their MPS output are on [Google Drive](https://drive.google.com/drive/folders/1INGZFiCD6qYtHSzbXo4Qegmj-flwikv0). The frames the splat trains on are written to `<recordings>/processed/<recording>/`.
 - **Final scene.** The USDZ is at `output/<recording>/camera-rgb-rectified-1008-h1512/isaacsim/<recording>_with_collider.usdz`. Open it in Isaac Sim with File > Open and press Play to turn on collisions.
 
-<p align="center"><img src="media/isaacsim_drive.gif" alt="Spot walking into a parked car and a hedge in an Ego2Sim scene in Isaac Sim" width="100%"></p>
+<p align="center"><img src="media/spot_views.gif" alt="Spot walking in an Ego2Sim scene in Isaac Sim, seen from behind the robot and then from above the yard" width="100%"></p>
 
 ## Citation
 

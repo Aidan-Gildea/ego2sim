@@ -1,0 +1,16 @@
+# launch_viewer.py. Builds on config.yaml so the viewer renders with the training settings.
+defaults:
+  - config
+  - _self_
+
+model_root:                          # folder of trained models
+host: "0.0.0.0"
+port: 8080
+reorient: "auto"
+enable_transform: false
+show_cameras: false
+load_raw_ply: false
+color_format: "rgbm"
+
+model:
+  white_background: true             # display only

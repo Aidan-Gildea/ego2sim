@@ -85,7 +85,7 @@ aria_mps single -i ~/recordings/Outside_20260812_141244.vrs --features SLAM
 
 The pipeline looks for the output in `mps_<recording>_vrs/slam/` next to the `.vrs`. If yours is somewhere else, set `MPS_FOLDER` to its `slam/` folder. [Sample recordings](https://drive.google.com/drive/folders/1INGZFiCD6qYtHSzbXo4Qegmj-flwikv0) with their MPS output are on Google Drive.
 
-The defaults assume recording profile `profile10` (RGB 2016×1512 at 30 Hz). For any other profile, see [debug_scripts](debug_scripts/README.md).
+The defaults assume recording profile `profile10` (RGB 2016×1512 at 30 Hz). For any other profile, see [tools/README.md](tools/README.md#debug).
 
 ### 2. Run the pipeline
 
@@ -97,9 +97,9 @@ A first run takes a few hours: extracting the frames and training the splat each
 
 | Stage | Script | What it makes |
 | --- | --- | --- |
-| 1.&nbsp;Frames | `scripts/bash_local/run_gen2_outside.sh` | Undistorted RGB frames, each with its camera pose from MPS |
-| 2.&nbsp;Collider | `mps-mesh/run_mps_mesh.sh` | A mesh from the MPS points, simplified for collisions |
-| 3.&nbsp;Splat | `scripts/bash_local/train_gen2_outside.sh` | The Gaussian splat, trained for 30,000 steps |
+| 1.&nbsp;Frames | `frames/run_gen2_outside.sh` | Undistorted RGB frames, each with its camera pose from MPS |
+| 2.&nbsp;Collider | `mesh/mps-mesh/run_mps_mesh.sh` | A mesh from the MPS points, simplified for collisions |
+| 3.&nbsp;Splat | `splat/train_gen2_outside.sh` | The Gaussian splat, trained for 30,000 steps |
 | 4.&nbsp;Scene | `isaacsim/splat_and_mesh_to_usdz.py` | One `.usdz` with the visible splat and the invisible collider |
 
 ```text
@@ -125,15 +125,12 @@ Open the `.usdz` with File > Open and press Play to turn on collisions. The spla
 <details>
 <summary><b>Settings</b></summary>
 
-Every setting is at the top of `run_ego2sim.sh`, with a note on what changing it does. Edit it there, or set it before the command, for example `ITERATIONS=15000 bash run_ego2sim.sh ...`.
+Training settings are in `splat/conf/config.yaml`, with a note on each. The ones you are most likely to change are `opt.iterations`, `opt.mcmc_strategy.cap_max` (most Gaussians, which sets GPU memory), `opt.handle_rolling_shutter`, `opt.depth_loss` and `scene.train_split`. The shell scripts pass training only the input and output paths, so the YAML is what runs.
+
+The other settings are at the top of `run_ego2sim.sh`. Edit them there, or set them before the command, for example `MESH_SOURCE=mvs bash run_ego2sim.sh ...`.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `ITERATIONS` | `30000` | Training steps. Training time grows about linearly with it |
-| `CAP_MAX` | `1500000` | Most Gaussians training may grow to. Higher gives more detail, more GPU memory and slower steps |
-| `ROLLING_SHUTTER`, `RS_START` | `true`, `10000` | Model the camera reading out row by row, from that step on. Sharper, but slower steps |
-| `DEPTH_LOSS` | `false` | Also fit the MPS sparse depth |
-| `TRAIN_SPLIT` | `7-1` | `7-1` holds out every 8th frame to score the splat. `all` trains on every frame |
 | `MESH_SOURCE` | `mps` | `mvs` builds the collider with COLMAP multi-view stereo instead. That takes hours and fills outdoor floors only slightly better. Known bug: frames get the wrong poses when their timestamps change length partway through a recording |
 | `DECIMATE` | `1` | `0` uses the full mesh as the collider |
 | `EYE_HEIGHT` | `1.6683` | Height of the glasses above the floor in metres. Only used to score the mesh |
@@ -148,7 +145,7 @@ A changed setting only affects stages that have not run yet. To redo the mesh, a
 To look at a trained splat on its own in a browser (port 8080):
 
 ```bash
-python launch_viewer.py model_root=output/<recording>
+python splat/launch_viewer.py model_root=output/<recording>
 ```
 
 ## Recording tips
@@ -161,14 +158,14 @@ python launch_viewer.py model_root=output/<recording>
 
 | Path | What it does |
 | --- | --- |
-| `run_ego2sim.sh` | Runs the whole pipeline and holds every setting |
-| `scripts/extract_aria_vrs.py` | Stage 1: reads the `.vrs` and the MPS output, writes rectified, posed frames |
-| `mps-mesh/` | Stage 2: collision mesh from the MPS points |
-| `photogrammetry/` | Mesh scoring and simplification used by stage 2, and the optional multi-view stereo mesh |
-| `train_lightning.py`, `model/`, `scene/`, `conf/` | Stage 3: splat training (from egocentric_splats). Defaults for every training option are in `conf/` |
-| `isaacsim/splat_and_mesh_to_usdz.py` | Stage 4: the Isaac Sim scene |
-| `paper_evaluations/` | The paper's evaluation: aligns an iPad LiDAR scan to the MPS frame and scores the collider against it |
-| `debug_scripts/`, `docs/` | Checks, and notes on Aria Gen 2 and rectification |
+| `run_ego2sim.sh` | Runs the whole pipeline and holds the frame, mesh and scene settings |
+| `frames/` | Stage 1: reads the `.vrs` and the MPS output, writes rectified, posed frames |
+| `mesh/mps-mesh/` | Stage 2: collision mesh from the MPS points |
+| `mesh/photogrammetry/` | Mesh scoring and simplification used by stage 2, and the optional multi-view stereo mesh |
+| `splat/` | Stage 3: splat training, rendering and the viewer (from egocentric_splats). Every training setting is in `splat/conf/config.yaml` |
+| `isaacsim/` | Stage 4: the Isaac Sim scene |
+| `tools/` | Checks for recordings and setups, and the paper's evaluation against iPad LiDAR scans |
+| `media/` | Images for this README |
 
 The code used for the paper is tagged [`srf-2026`](https://github.com/Aidan-Gildea/ego2sim/tree/srf-2026).
 

@@ -1,0 +1,108 @@
+# Every training setting. splat/train_gen2_outside.sh only adds the four paths
+# marked "set by train script". render_lightning.py and launch_viewer.py (viewer.yaml) read this too.
+
+train_model: "3dgs"                  # 3dgs or 2dgs
+exp_name: ""                         # set by train script: <recording>/<rect>
+output_root: "./output"              # set by train script
+
+opt:
+  iterations: 30_000                 # training steps; Gaussian count stops growing at 25k
+  steps_scaler: 1.0                  # scales iterations and every *_iter below
+  batch_size: 1
+  global_scale: 1.0                  # scales scene-size learning rates
+
+  densification_strategy: "MCMC"     # MCMC (capped) or default (grew to 15M, OOM on 16 GB)
+  mcmc_strategy:
+    cap_max: 1_500_000               # max Gaussians; fits 16 GB outdoors, Room needed 48 GB at 1M
+    noise_lr: 5e5
+    mcmc_refine_start_iter: 500
+    mcmc_refine_stop_iter: 25_000
+    mcmc_refine_every: 100
+    mcmc_min_opacity: 0.005
+  gs_default_strategy:               # only with densification_strategy: default
+    prune_opa: 0.005
+    grow_grad2d: 0.0002
+    grow_scale3d: 0.01
+    prune_scale3d: 0.1
+    refine_start_iter: 500
+    refine_stop_iter: 15_000
+    reset_every: 3000
+    refine_every: 100
+
+  handle_rolling_shutter: true       # model row-by-row RGB readout
+  handle_rolling_shutter_start_iter: 10_000   # slower steps after this
+
+  init_opa: 0.1                      # initial opacity
+  init_scale: 1.0                    # initial scale multiplier
+  sh_degree_interval: 1000           # add one SH degree every N steps
+
+  packed: false                      # less memory, slightly slower
+  sparse_grad: false                 # experimental
+  absgrad: true                      # absolute gradients for densification
+  antialiased: false
+
+  pixel_loss: "l1"                   # l1 or huber
+  pixel_lambda: 0.8
+  dssim_lambda: 0.2
+  l1_grad: false                     # luminance gradient loss
+  l1_grad_lambda: 0.1
+  depth_loss: false                  # fit MPS sparse depth (untested on our recordings)
+  depth_lambda: 2e-4
+  opacity_reg: 0.0
+  scale_reg: 0.0
+
+  normal_loss: true                  # 2dgs only
+  normal_lambda: 0.05                # 2dgs only
+  normal_start_iter: 7000            # 2dgs only
+  dist_loss: true                    # 2dgs only
+  dist_lambda: 0.01                  # 2dgs only
+  dist_start_iter: 3000              # 2dgs only
+
+model:
+  sh_degree: 3                       # spherical-harmonics degree
+  white_background: false
+  use_3d_smooth_filter: true         # Mip-Splatting 3D filter
+
+scene:
+  data_root: ""                      # set by train script
+  scene_name: ""                     # set by train script: <recording>/<rect>, + joins folders
+  source_path: ""                    # filled in at runtime
+  model_path: ${output_root}/${exp_name}
+  input_format: "aria"
+  data_format: "transforms_with_sparse_depth.json"
+  train_split: "7-1"                 # 7-1 holds out every 8th frame; all scores on training frames
+  start_timestamp_ns: -1             # -1 = recording start
+  end_timestamp_ns: -1               # -1 = recording end
+  mask_rendering: false
+  load_ply: ""                       # start from this PLY instead of MPS points
+  save_ply: true
+
+train:
+  shuffle: true
+
+viewer:
+  use_trainer_viewer: false          # live browser viewer while training
+  port: 8080
+
+wandb:
+  use_wandb: false
+  project: "egoDTC"
+  entity: "surreal_dtc"
+
+render:                              # render_lightning.py only
+  render_json: ""
+  render_output: ${output_root}/${exp_name}/render
+  render_image: true
+  render_depth: true
+  render_normal: true
+  render_gt: false
+  viewspace_normal: true
+  gain_amplify: 1.0
+  start_timestamp_ns: -1
+  end_timestamp_ns: -1
+  depth_min: 0.1                     # depth clip (m)
+  depth_max: 7.0                     # depth clip (m)
+  render_fps: 1                      # >1 interpolates poses to this fps
+  zoom: 1.0
+  render_height: 960
+  aspect_ratio: -1                   # width/height; Aria frames are rotated, so 4:3 is 0.75

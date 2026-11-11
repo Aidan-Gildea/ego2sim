@@ -1,56 +1,25 @@
 #!/usr/bin/env python
-"""Package a trained Gaussian splat and a collision mesh into ONE .usdz for NVIDIA Isaac Sim.
-
-    python isaacsim/splat_and_mesh_to_usdz.py \
-        --splat output/<SCENE>/<RECT>/point_cloud/iteration_30000/point_cloud.ply \
-        --mesh  output/photogrammetry/<SCENE>/<RECT>/mesh_delaunay_decimated.ply \
-        --out   output/<SCENE>/<RECT>/isaacsim/<SCENE>_with_collider.usdz
-
-Both inputs are in the MPS world frame (gravity-aligned, Z-up, metres), so nothing is moved:
-the splat and the collider line up by construction.
-
-What it does, in order
-  1. read the splat PLY (positions, wxyz quaternions, log scales, opacity logits, SH colour)
-  2. drop stray Gaussians farther than --radius (50 m) from the median position
-  3. write the splat as a NuRec volume (what Isaac Sim's RTX renderer draws), identity transform
-  4. read the mesh PLY, drop triangles with an edge longer than --max-edge (2 m), and write it
-     as an invisible static triangle-mesh collider
-  5. pack everything into one USDZ (root layer first, 64-byte aligned by Sdf.ZipFileWriter)
-
-USDZ contents
-  default.usda   root layer: /World (Xform, defaultPrim), over /World/gauss -> @gauss.usda@,
-                 def /World/collider -> @./collider.usdc@, customLayerData["renderSettings"]
-  splat.nurec    gzip (level 0) of msgpack(NuRec "3dgut-nrend" template), arrays as float16
-  gauss.usda     /World/gauss UsdVol.Volume with omni:nurec:* attributes, xformOp = identity
-  collider.usdc  /collider UsdGeom.Mesh, invisible, PhysicsCollisionAPI + MeshCollisionAPI(none)
-
-Needs numpy, plyfile, msgpack and usd-core (pxr); the 3dgrut conda env has all four. No GPU,
-no torch and no 3dgrut checkout are needed.
-
-This does in one step what isaacsim/export_isaacsim_usdz.sh did with four:
-scripts/filter_splat_outliers.py (step 2), 3dgrut's threedgrut/export/scripts/ply_to_usd.py
-(step 3), scripts/fix_nurec_usdz_frame.py (step 3, transform) and isaacsim/add_mesh_collider.py
-(steps 4-5). 3dgrut's ply_to_usd.py needs a GPU only because it builds a 3DGUT renderer it never
-uses (model.py MixtureOfGaussians); the USDZ writing itself is numpy and pxr.
-
---compare OLD.usdz checks the new file against one made by the old four-step path: zip entries,
-layer metadata, every composed prim, attribute and relationship (arrays by SHA-256), and the
-decoded NuRec payload. Expected output: "identical (apart from the .nurec file name)".
-
-Portions of steps 3 and 5 (the NuRec payload template, the volume layer and the root layer) are
-adapted from NVIDIA 3dgrut, https://github.com/nv-tlabs/3dgrut at commit
-70604495bfbebd5add0d3ffdc8a57bc14a63a94f, files threedgrut/export/nurec_templates.py,
-threedgrut/export/usd_util.py and threedgrut/export/usdz_exporter.py.
-Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. Licensed under the Apache License,
-Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-Changes from 3dgrut: the PLY is read with plyfile instead of through a torch model; the volume
-transform is identity instead of 3dgrut's baked ((-1,0,0),(0,0,-1),(0,-1,0)) conversion
-(usd_util.py:141-152), which lays an MPS-frame scene on its side; renderer parameters are
-constants copied from 3dgrut's default config instead of read through Hydra; the gzip header
-timestamp is fixed to 0, so every file inside the USDZ is byte-identical from run to run (only the
-zip entries' modification times differ).
-"""
+# Trained Gaussian splat and collision mesh packed into one USDZ for NVIDIA Isaac Sim: the splat as a NuRec
+# volume for the RTX renderer, the mesh as an invisible static collider. Both are in the MPS world frame
+# (gravity-aligned, Z-up, metres), so nothing is moved. Needs numpy, plyfile, msgpack and pxr (the 3dgrut env
+# has all four), but no GPU, torch or 3dgrut checkout.
+#
+# python isaacsim/splat_and_mesh_to_usdz.py \
+#     --splat output/<SCENE>/<RECT>/point_cloud/iteration_30000/point_cloud.ply \
+#     --mesh  output/mps-mesh/<SCENE>/<RECT>/mesh_delaunay_decimated.ply \
+#     --out   output/<SCENE>/<RECT>/isaacsim/<SCENE>_with_collider.usdz
+#
+# The NuRec payload template, the volume layer and the root layer are partly adapted from NVIDIA 3dgrut,
+# https://github.com/nv-tlabs/3dgrut at commit 70604495bfbebd5add0d3ffdc8a57bc14a63a94f, files
+# threedgrut/export/nurec_templates.py, threedgrut/export/usd_util.py and threedgrut/export/usdz_exporter.py.
+# Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. Licensed under the Apache License, Version 2.0
+# (http://www.apache.org/licenses/LICENSE-2.0); distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# CONDITIONS OF ANY KIND.
+# Changes from 3dgrut: the PLY is read with plyfile instead of through a torch model; the volume transform is
+# identity instead of 3dgrut's baked ((-1,0,0),(0,0,-1),(0,-1,0)) conversion (usd_util.py:141-152), which
+# lays an MPS-frame scene on its side; renderer parameters are constants copied from 3dgrut's default config
+# instead of read through Hydra; the gzip header timestamp is fixed to 0, so every file inside the USDZ is
+# byte-identical from run to run (only the zip entries' modification times differ).
 
 import argparse
 import gzip
@@ -67,41 +36,40 @@ import numpy as np
 from plyfile import PlyData
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdUtils, UsdVol, Vt
 
-NUREC_FILE = "splat.nurec"  # the old path named it after its temporary splat.usdz
-GAUSS_FILE = "gauss.usda"
-ROOT_FILE = "default.usda"
+NUREC_FILE = "splat.nurec"       # NuRec payload; the old path's name for it, from its temporary splat.usdz
+GAUSS_FILE = "gauss.usda"        # /World/gauss NuRec volume layer
+ROOT_FILE = "default.usda"       # root layer, references the splat and the collider
 COLLIDER_NAME = "collider"
-COLLIDER_FILE = "collider.usdc"
-SH_DEGREE = 3  # NuRec radiance_sph_degree; our splats store 45 f_rest values (degree 3)
+COLLIDER_FILE = "collider.usdc"  # /collider mesh layer
+SH_DEGREE = 3                    # NuRec radiance_sph_degree; our splats store 45 f_rest values (degree 3)
 
-# Renderer parameters that 3dgrut's ply_to_usd.py writes into the .nurec payload. They come from
-# its default Hydra config apps/colmap_3dgut.yaml (render/3dgut.yaml over render/3dgrt.yaml over
-# base_gs.yaml) at commit 70604495, not from fill_3dgut_template's own defaults. Keep the Python
-# types: msgpack encodes 1.0 and 1 differently.
+# renderer parameters 3dgrut's ply_to_usd.py writes into the .nurec payload, from its default Hydra config
+# apps/colmap_3dgut.yaml (render/3dgut.yaml over render/3dgrt.yaml over base_gs.yaml) at commit 70604495,
+# not from fill_3dgut_template's own defaults; the Python types matter, msgpack encodes 1.0 and 1 differently
 NUREC_PARAMS = {
-    "density_activation": "sigmoid",  # base_gs.yaml model.density_activation
-    "scale_activation": "exp",  # base_gs.yaml model.scale_activation
-    "rotation_activation": "normalize",  # usdz_exporter.py:94
-    "density_kernel_degree": 2,  # render/3dgut.yaml:8
-    "density_kernel_density_clamping": True,  # render/3dgrt.yaml:6
-    "density_kernel_min_response": 0.0113,  # render/3dgut.yaml:9
-    "radiance_sph_degree": 3,  # render/3dgrt.yaml:10
-    "transmittance_threshold": 0.0001,  # render/3dgut.yaml:10
-    "global_z_order": True,  # render/3dgut.yaml:26
-    "n_rolling_shutter_iterations": 5,  # render/3dgut.yaml:18
-    "ut_alpha": 1.0,  # render/3dgut.yaml:19
-    "ut_beta": 2.0,  # render/3dgut.yaml:20
-    "ut_kappa": 0.0,  # render/3dgut.yaml:21
-    "ut_require_all_sigma_points": False,  # render/3dgut.yaml:23
-    "image_margin_factor": 0.1,  # render/3dgut.yaml:22
-    "rect_bounding": True,  # render/3dgut.yaml:14
-    "tight_opacity_bounding": True,  # render/3dgut.yaml:15
-    "tile_based_culling": True,  # render/3dgut.yaml:16
-    "k_buffer_size": 0,  # render/3dgut.yaml:25
+    "density_activation": "sigmoid",            # base_gs.yaml model.density_activation
+    "scale_activation": "exp",                  # base_gs.yaml model.scale_activation
+    "rotation_activation": "normalize",         # usdz_exporter.py:94
+    "density_kernel_degree": 2,                 # render/3dgut.yaml:8
+    "density_kernel_density_clamping": True,    # render/3dgrt.yaml:6
+    "density_kernel_min_response": 0.0113,      # render/3dgut.yaml:9
+    "radiance_sph_degree": 3,                   # render/3dgrt.yaml:10
+    "transmittance_threshold": 0.0001,          # render/3dgut.yaml:10
+    "global_z_order": True,                     # render/3dgut.yaml:26
+    "n_rolling_shutter_iterations": 5,          # render/3dgut.yaml:18
+    "ut_alpha": 1.0,                            # render/3dgut.yaml:19
+    "ut_beta": 2.0,                             # render/3dgut.yaml:20
+    "ut_kappa": 0.0,                            # render/3dgut.yaml:21
+    "ut_require_all_sigma_points": False,       # render/3dgut.yaml:23
+    "image_margin_factor": 0.1,                 # render/3dgut.yaml:22
+    "rect_bounding": True,                      # render/3dgut.yaml:14
+    "tight_opacity_bounding": True,             # render/3dgut.yaml:15
+    "tile_based_culling": True,                 # render/3dgut.yaml:16
+    "k_buffer_size": 0,                         # render/3dgut.yaml:25
 }
 
-# Isaac Sim RTX settings, stored in the root layer's customLayerData (3dgrut usd_util.py:123-134).
-# Isaac Sim applies them when the USDZ is opened directly, not when it is referenced into a stage.
+# Isaac Sim RTX settings for the root layer's customLayerData (3dgrut usd_util.py:123-134); applied when
+# the USDZ is opened directly, not when it is referenced into a stage
 RENDER_SETTINGS = {
     "rtx:rendermode": "RaytracedLighting",
     "rtx:directLighting:sampledLighting:samplesPerPixel": 8,
@@ -115,16 +83,8 @@ RENDER_SETTINGS = {
 }
 
 
-# --- 1. splat PLY ------------------------------------------------------------------------------
+# splat PLY (model/vanilla_gsplat.py save_ply) as float32 arrays in NuRec's layout, values pre-activation
 def read_splat_ply(path):
-    """Return the splat as float32 arrays in NuRec's layout (pre-activation values).
-
-    PLY layout (model/vanilla_gsplat.py save_ply): x y z, nx ny nz, f_dc_0..2, f_rest_0..44 stored
-    channel-major (all 15 red coefficients, then green, then blue), opacity (logit),
-    scale_0..2 (log), rot_0..3 (w x y z, not normalised), plus a one-row 'metadata' element.
-    NuRec wants f_rest coefficient-major (r,g,b of coefficient 1, then coefficient 2, ...), the
-    same reshuffle as 3dgrut model.py:705-706.
-    """
     ply = PlyData.read(str(path))
     v = ply["vertex"]
     names = [p.name for p in v.properties]
@@ -133,6 +93,7 @@ def read_splat_ply(path):
         if fmt != "rgb":
             sys.exit(f"{path}: colour format '{fmt}'; only 'rgb' splats are supported")
 
+    # columns named prefix<i> in index order, as one (n, k) array; None if there are none
     def stack(prefix):
         cols = sorted((n for n in names if n.startswith(prefix)), key=lambda n: int(n.split("_")[-1]))
         return np.column_stack([np.asarray(v[c], dtype=np.float32) for c in cols]) if cols else None
@@ -143,30 +104,25 @@ def read_splat_ply(path):
     if rest is None:  # DC-only splat: zeros, as 3dgrut does (model.py:707-709)
         specular = np.zeros((n, 3 * n_coeffs), np.float32)
     elif rest.shape[1] == 3 * n_coeffs:
+        # f_rest channel-major (15 red, 15 green, 15 blue) to NuRec's coefficient-major, as model.py:705-706
         specular = rest.reshape(n, 3, n_coeffs).transpose(0, 2, 1).reshape(n, 3 * n_coeffs)
     else:
         sys.exit(f"{path}: {rest.shape[1]} f_rest values, expected {3 * n_coeffs} or 0")
 
     return {
         "positions": np.column_stack([v["x"], v["y"], v["z"]]).astype(np.float32),
-        "rotations": stack("rot"),  # 3dgrut matches the 'rot' prefix (model.py:722)
-        "scales": stack("scale_"),
-        "densities": np.asarray(v["opacity"], dtype=np.float32)[:, None],
+        "rotations": stack("rot"),  # w x y z, not normalised; 3dgrut matches the 'rot' prefix (model.py:722)
+        "scales": stack("scale_"),  # log
+        "densities": np.asarray(v["opacity"], dtype=np.float32)[:, None],  # logit
         "features_albedo": np.column_stack([v["f_dc_0"], v["f_dc_1"], v["f_dc_2"]]).astype(np.float32),
         "features_specular": np.ascontiguousarray(specular),
     }
 
 
-# --- 2. stray Gaussians --------------------------------------------------------------------------
+# splat without Gaussians beyond radius m of the median position (strays that would set the bounds)
 def drop_far_gaussians(splat, radius):
-    """Keep Gaussians within `radius` m of the median position.
-
-    MCMC densification leaves a few hundred nearly transparent Gaussians kilometres away. They are
-    invisible but would set the asset's bounding box and the NuRec crop bounds. The median, not
-    the origin, is the centre because the MPS world origin sits wherever tracking started.
-    """
     xyz = splat["positions"]
-    centre = np.median(xyz, axis=0)
+    centre = np.median(xyz, axis=0)  # not the origin: MPS puts that wherever tracking started
     keep = np.linalg.norm(xyz - centre, axis=1) <= radius
     dropped = int((~keep).sum())
     print(f"splat: kept {int(keep.sum()):,}/{keep.size:,} Gaussians, dropped {dropped:,} beyond "
@@ -177,16 +133,14 @@ def drop_far_gaussians(splat, radius):
     return {k: a[keep] for k, a in splat.items()}
 
 
-# --- 3. NuRec payload and volume layer -----------------------------------------------------------
+# .nurec bytes: gzip(msgpack(template)) as in 3dgrut nurec_templates.py:101-251, usdz_exporter.py:124-128
 def nurec_payload(splat):
-    """gzip(msgpack(template)) as 3dgrut nurec_templates.py:101-251 and usdz_exporter.py:124-128.
-
-    The dict is written in the template's key order, so the msgpack bytes match 3dgrut's.
-    """
     p = NUREC_PARAMS
     f16 = {k: a.astype(np.float16) for k, a in splat.items()}  # nurec_templates.py:68-77
     extra_signal = np.zeros((f16["positions"].shape[0], 0), dtype=np.float16)  # :80
     g = ".gaussians_nodes.gaussians."
+
+    # keys in the template's order, so the msgpack bytes match 3dgrut's
     template = {
         "nre_data": {
             "version": "0.2.576",
@@ -238,7 +192,8 @@ def nurec_payload(splat):
                 },
                 "name": "gaussians_primitive",
                 "appearance_embedding": {"name": "skip-appearance", "embedding_dim": 0, "device": "cuda"},
-                "background": {"name": "skip-background", "device": "cuda", "composite_in_linear_space": False},
+                "background": {"name": "skip-background", "device": "cuda",
+                               "composite_in_linear_space": False},
             },
             "state_dict": {
                 "._extra_state": {"obj_track_ids": {"gaussians": []}},
@@ -268,8 +223,8 @@ def nurec_payload(splat):
     return buffer.getvalue()
 
 
+# in-memory stage: Z-up, metres, /World Xform as defaultPrim (3dgrut usd_util.py:50-66)
 def new_stage():
-    """Z-up, metres, /World Xform as defaultPrim (3dgrut usd_util.py:50-66)."""
     stage = Usd.Stage.CreateInMemory()
     stage.SetMetadata("metersPerUnit", 1)
     stage.SetMetadata("upAxis", "Z")
@@ -278,8 +233,8 @@ def new_stage():
     return stage
 
 
+# NuRec volume layer /World/gauss with an identity transform (3dgrut usd_util.py:91-208)
 def write_gauss_layer(path, positions):
-    """NuRec volume /World/gauss (3dgrut usd_util.py:91-208), with an identity transform."""
     lo = [float(x) for x in positions.min(axis=0)]
     hi = [float(x) for x in positions.max(axis=0)]
     print(f"splat bounds (m): {np.round(lo, 2).tolist()} .. {np.round(hi, 2).tolist()}")
@@ -288,8 +243,7 @@ def write_gauss_layer(path, positions):
     stage.SetMetadataByDictKey("customLayerData", "renderSettings", RENDER_SETTINGS)
     volume = UsdVol.Volume.Define(stage, "/World/gauss")
     prim = volume.GetPrim()
-    # The MPS frame already is the stage frame (Z-up, metres), so no rotation.
-    volume.AddTransformOp().Set(Gf.Matrix4d(1.0))
+    volume.AddTransformOp().Set(Gf.Matrix4d(1.0))  # the MPS frame is already Z-up, metres: no rotation
     prim.CreateAttribute("omni:nurec:isNuRecVolume", Sdf.ValueTypeNames.Bool).Set(True)
     prim.CreateAttribute("omni:nurec:useProxyTransform", Sdf.ValueTypeNames.Bool).Set(False)
 
@@ -316,9 +270,8 @@ def write_gauss_layer(path, positions):
     stage.GetRootLayer().Export(path)
 
 
-# --- 4. collider --------------------------------------------------------------------------------
+# name of the face index list: COLMAP writes 'vertex_index', Open3D 'vertex_indices'
 def face_index_property(path):
-    """Name of the face index list: COLMAP writes 'vertex_index', Open3D 'vertex_indices'."""
     with open(path, "rb") as f:
         for raw in f:
             line = raw.decode("ascii", "replace").strip()
@@ -329,8 +282,8 @@ def face_index_property(path):
     sys.exit(f"{path}: no face vertex_index / vertex_indices property")
 
 
+# (points float32 (N, 3), triangles int64 (M, 3)) from a binary or ASCII PLY
 def read_triangle_mesh(path):
-    """Return (points float32 (N,3), triangles int64 (M,3)) from a binary or ASCII PLY."""
     index_name = face_index_property(path)
     try:  # fast path for fixed-size face lists (plyfile >= 0.8)
         ply = PlyData.read(path, known_list_len={"face": {index_name: 3}})
@@ -343,23 +296,20 @@ def read_triangle_mesh(path):
     return points, tris.astype(np.int64).reshape(-1, 3)
 
 
+# (points, triangles, number dropped) without triangles that have an edge over max_edge, or unused vertices
 def drop_long_triangles(points, tris, max_edge):
-    """Drop triangles with an edge longer than max_edge, then the vertices no longer used.
-
-    COLMAP's Delaunay mesher joins some surface points to far-away noise and sky with long thin
-    triangles. As an invisible collider these would be invisible walls and ceilings. On the
-    Outside_20260812_141244 MVS mesh this removes 0.17% of triangles, all far from or high above
-    the walked path, and leaves floor coverage along the path unchanged (0.880).
-    """
     p = points[tris]  # (M, 3 corners, 3 xyz)
-    longest = np.max(np.stack([np.linalg.norm(p[:, i] - p[:, (i + 1) % 3], axis=1) for i in range(3)], 1), axis=1)
-    keep = longest <= max_edge
+    longest = np.max(
+        np.stack([np.linalg.norm(p[:, i] - p[:, (i + 1) % 3], axis=1) for i in range(3)], 1),
+        axis=1,
+    )
+    keep = longest <= max_edge  # Delaunay spikes to far noise and sky, which would be invisible walls
     used, remapped = np.unique(tris[keep], return_inverse=True)
     return points[used], remapped.reshape(-1, 3).astype(np.int32), int((~keep).sum())
 
 
+# invisible static triangle-mesh collider layer, defaultPrim /collider
 def write_collider_layer(path, points, tris):
-    """Invisible static triangle-mesh collider, defaultPrim /collider."""
     stage = Usd.Stage.CreateNew(path)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
@@ -372,16 +322,15 @@ def write_collider_layer(path, points, tris):
     mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
     mesh.CreateDoubleSidedAttr(True)
     mesh.CreateVisibilityAttr(UsdGeom.Tokens.invisible)  # the splat does all the rendering
-    # Static collider (no RigidBodyAPI). Approximation "none" = the exact triangle mesh,
-    # which PhysX supports for static geometry.
+
+    # static (no RigidBodyAPI), so approximation "none", the exact triangle mesh, is allowed in PhysX
     UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(UsdPhysics.Tokens.none)
     stage.GetRootLayer().Save()
 
 
-# --- 5. root layer and package ------------------------------------------------------------------
+# root layer default.usda, referencing the splat and the collider (3dgrut usd_util.py:231-257)
 def write_root_layer(path):
-    """default.usda: references the splat and the collider (3dgrut usd_util.py:231-257)."""
     stage = new_stage()
     delegate = UsdUtils.CoalescingDiagnosticDelegate()  # silences 'unresolved reference' in memory
     stage.OverridePrim("/World/gauss").GetReferences().AddReference(GAUSS_FILE)
@@ -393,8 +342,8 @@ def write_root_layer(path):
     del delegate
 
 
+# USDZ of the root layer first (USDZ rule), then payload, splat layer, collider; 64-byte aligned
 def package_usdz(out_path, work_dir):
-    """Root layer first (USDZ rule), then payload, splat layer, collider; 64-byte aligned."""
     tmp = out_path + ".partial"
     writer = Sdf.ZipFileWriter.CreateNew(tmp)
     for name in (ROOT_FILE, NUREC_FILE, GAUSS_FILE, COLLIDER_FILE):
@@ -403,7 +352,7 @@ def package_usdz(out_path, work_dir):
     os.replace(tmp, out_path)
 
 
-# --- optional: check against a USDZ made by the old four-step path ------------------------------
+# value with every bytes object replaced by its SHA-256, through nested dicts and lists
 def _digest(value):
     if isinstance(value, (bytes, bytearray)):
         return hashlib.sha256(value).hexdigest()
@@ -414,6 +363,7 @@ def _digest(value):
     return value
 
 
+# attribute value, with arrays as (dtype, shape, SHA-256)
 def _attr_value(attr):
     value = attr.Get()
     if hasattr(value, "__len__") and not isinstance(value, str) and type(value).__name__.endswith("Array"):
@@ -422,8 +372,8 @@ def _attr_value(attr):
     return value
 
 
+# everything about a USDZ that should match, as plain Python values
 def _describe(usdz):
-    """Everything that should match, as plain Python values."""
     with zipfile.ZipFile(usdz) as z:
         names = z.namelist()
         nurec = [n for n in names if n.endswith(".nurec")]
@@ -442,17 +392,21 @@ def _describe(usdz):
         }
     return {
         "zip_entries": [n if not n.endswith(".nurec") else "*.nurec" for n in names],
-        "root_layer": {"upAxis": UsdGeom.GetStageUpAxis(stage), "metersPerUnit": UsdGeom.GetStageMetersPerUnit(stage),
-                       "defaultPrim": root.defaultPrim, "customLayerData": dict(root.customLayerData)},
+        "root_layer": {"upAxis": UsdGeom.GetStageUpAxis(stage),
+                       "metersPerUnit": UsdGeom.GetStageMetersPerUnit(stage),
+                       "defaultPrim": root.defaultPrim,
+                       "customLayerData": dict(root.customLayerData)},
         "prims": prims,
         "nurec": _digest(payload),
     }
 
 
+# --compare: True if the new USDZ matches one from the old four-step path, apart from the .nurec name
 def compare_usdz(new, old):
     a, b = _describe(new), _describe(old)
     problems = []
 
+    # differences between nested values x and y, added to problems
     def walk(x, y, where):
         if isinstance(x, dict) and isinstance(y, dict):
             for k in sorted(set(x) | set(y), key=str):
@@ -463,7 +417,7 @@ def compare_usdz(new, old):
         elif x != y:
             problems.append(f"{where}: new={x!r} old={y!r}")
 
-    # The one intended difference: the old path named the payload after its temporary file.
+    # the one intended difference: the old path named the payload after its temporary file
     for p in (a, b):
         for prim in p["prims"].values():
             if "filePath" in prim["attrs"]:
@@ -472,18 +426,22 @@ def compare_usdz(new, old):
     walk(a, b, "")
     for line in problems:
         print("DIFF", line)
-    print("compare:", "identical (apart from the .nurec file name)" if not problems else f"{len(problems)} differences")
+    print("compare:",
+          "identical (apart from the .nurec file name)" if not problems else f"{len(problems)} differences")
     return not problems
 
 
-# --- main ----------------------------------------------------------------------------------------
+# USDZ written to --out; exit 1 if --compare finds differences
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description="trained splat and collision mesh packed into one USDZ for Isaac Sim")
     ap.add_argument("--splat", required=True, help="trained splat PLY (point_cloud.ply)")
     ap.add_argument("--mesh", required=True, help="triangle mesh PLY in the same frame")
     ap.add_argument("--out", required=True, help="USDZ to write")
-    ap.add_argument("--radius", type=float, default=50.0, help="keep Gaussians within this many m of the median")
-    ap.add_argument("--max-edge", type=float, default=2.0, help="drop collider triangles with a longer edge (m)")
+    ap.add_argument("--radius", type=float, default=50.0,
+                    help="keep Gaussians within this many m of the median")
+    ap.add_argument("--max-edge", type=float, default=2.0,
+                    help="drop collider triangles with a longer edge (m)")
     ap.add_argument("--compare", metavar="OLD_USDZ", help="check the result against a USDZ from the old path")
     args = ap.parse_args()
 
@@ -491,11 +449,13 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(out_dir, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=out_dir) as work:
+        # 1-3. splat read, stray Gaussians dropped, written as the NuRec payload and volume layer
         splat = drop_far_gaussians(read_splat_ply(args.splat), args.radius)
         with open(os.path.join(work, NUREC_FILE), "wb") as f:
             f.write(nurec_payload(splat))
         write_gauss_layer(os.path.join(work, GAUSS_FILE), splat["positions"])
 
+        # 4. mesh read, long triangles dropped, written as the collider layer
         points, tris = read_triangle_mesh(args.mesh)
         n_in = len(tris)
         points, tris, n_dropped = drop_long_triangles(points, tris, args.max_edge)
@@ -503,6 +463,7 @@ def main():
               f"({100.0 * n_dropped / max(n_in, 1):.2f}%), {len(tris):,} kept, {len(points):,} vertices")
         write_collider_layer(os.path.join(work, COLLIDER_FILE), points, tris)
 
+        # 5. root layer, then everything packed into one USDZ
         write_root_layer(os.path.join(work, ROOT_FILE))
         package_usdz(args.out, work)
 
